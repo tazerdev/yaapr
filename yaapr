@@ -187,7 +187,7 @@ def exec_play(cur_name, cur_play, cur_cfg, cur_tags, cache_dir, log_file, logger
 
 def ParseCommandLineArguments():
     arg_parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter, description="Ansible playbook runner.")
-    arg_parser.add_argument('-i', '--ini', type=str, help="Path to the ini file.", default=argparse.SUPPRESS)
+    arg_parser.add_argument('-i', '--ini', type=str, help="Path to the ini file.", default="/etc/yaapr/yaapr.ini")
 
     return arg_parser
 
@@ -203,7 +203,7 @@ def main():
     # catch ini errors, especially duplicate section names
     try:
         config = configparser.ConfigParser()
-        config.read('test.ini')
+        config.read(args.ini)
     except Exception as e:
         print('Error: ' + str(e))
         exit(1)
@@ -218,13 +218,13 @@ def main():
 
     logger = logging.getLogger("runner")
     logger.setLevel(logging.DEBUG)
-    filename = os.path.join(config['DEFAULT']['logdir'], 'runner.log')
+    filename = os.path.join(config['DEFAULT']['logdir'], 'yaapr.log')
     fileHandler = logging.FileHandler(filename, mode="a")
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%Y-%m-%d %H:%M:%S")
     fileHandler.setFormatter(formatter)
     logger.addHandler(fileHandler)
 
-    logger.info('main: Starting runnner')
+    logger.info('main: Starting playbook runnner')
 
     # convert each section to a dict and append to a list
     for section in config:
@@ -268,7 +268,7 @@ def main():
             if result and prep_cache(item['name'], item['git_url'], item['git_branch'], item['git_dir'], logger):
                 result = exec_play(item['name'], item['play_file'], item['cfg_file'], item['skip_tags'], item['cache_dir'], item['log_file'], logger)
 
-    logger.info('main: Stopping runnner')
+    logger.info('main: Stopping playbook runnner')
 
 
 if __name__ == "__main__":
