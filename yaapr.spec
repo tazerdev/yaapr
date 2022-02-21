@@ -35,8 +35,8 @@ install -m 0755 --directory %{buildroot}/var/log/yaapr
 install -m 0755 --directory %{buildroot}/var/lib/yaapr
 install -m 0755 --directory %{buildroot}/var/lib/yaapr/cache
 
-install -m 644 %{topdir}/etc/yaapr/yaapr.ini %{buildroot}/etc/yaapr
-install -m 755 %{topdir}/usr/bin/yaapr %{buildroot}/usr/bin
+install -m 644 %{topdir}/yaapr.ini %{buildroot}/etc/yaapr
+install -m 755 %{topdir}/yaapr %{buildroot}/usr/bin
 
 # needed to prevent compiled python files from being included
 exit 0
