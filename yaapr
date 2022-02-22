@@ -15,24 +15,15 @@ from operator import itemgetter
 from systemd.journal import JournalHandler
 
 def parse_section(section):
-    """
-    Convert a ini section into a dict for use throughout the program.
-    """
-    cur = dict({
-            'name': section.name,
-            'priority': int(section['priority']),
-            'cache_dir': section['cachedir'],
-            'git_dir': os.path.join(section['cachedir'], section.name),
-            'git_branch': section['branch'],
-            'git_url': section['repo_url'],
-            'log_dir': section['logdir'],
-            'log_file': os.path.join(section['logdir'], section['logfile']),
-            'cfg_file': os.path.join(section['cachedir'], section.name, section['config']),
-            'play_file': os.path.join(section['cachedir'], section.name, section['play']),
-            'skip_tags': section['skip_tags'],
-            'pre_flight': True,
-            'debug': []
-            })
+   """
+   Convert a configparser ini section into a dict for use throughout the program.
+
+   ### Parameters:
+   - section (configparser.Section): A section from a configparser ini file.
+
+   ### Returns:
+   - cur (dict): A dictionary derived from the configparser.Section
+   """
 
     return cur
 
