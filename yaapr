@@ -204,7 +204,7 @@ def prep_cache(cur_name, cur_url, cur_branch, cur_dir, logger):
 
 
 # finally, run the ansible playbook
-def exec_play(cur_name, cur_play, cur_cfg, cur_tags, log_file, logger):
+def exec_play(cur_name, cur_play, cur_cfg, cur_skip_tags, log_file, cur_tags, logger):
     """
     Execute an ansible-playbook based on the supplied parameters.
 
@@ -212,8 +212,9 @@ def exec_play(cur_name, cur_play, cur_cfg, cur_tags, log_file, logger):
     - cur_name (string): name of the ini section being processed.
     - cur_play (string): path to the ansible playbook to be run.
     - cur_cfg (string): path to the ansible configuration to be used.
-    - cur_tags (string): a comma separate string of tag names to be passed to the --skip-tags argument.
+    - cur_skip_tags (string): a comma separated string of tag names to be passed to the --skip-tags argument.
     - log_file (string): a path to a file where the playbook output will be redirected.
+    - cur_tags (string): a comma separated string of tag names to be passed to the --tags argument.
     - logger (logging.logger): The logging facility used to output messages to.
 
     ### Returns:
@@ -229,7 +230,17 @@ def exec_play(cur_name, cur_play, cur_cfg, cur_tags, log_file, logger):
         if os.path.exists(cur_cfg):
             new_env = os.environ.copy()
             new_env['ANSIBLE_CONFIG'] = '{0}'.format(cur_cfg)
-            cmd_list = [aplay, '-i', 'localhost,', '-c', 'local', '--limit', 'localhost', '--check', '--skip-tags={0}'.format(cur_tags), cur_play ]
+
+            cmd_list = [aplay, '-i', 'localhost,', '-c', 'local', '--limit', 'localhost', '--check', '--diff' ]
+
+            if cur_tags != '':
+                cmd_list.append('--tags={0}'.format(cur_tags))
+
+            if cur_skip_tags != '':
+                cmd_list.append('--skip-tags={0}'.format(cur_skip_tags))
+
+            cmd_list.append(cur_play)
+
             logger.info('exec_play: {0} - Running playbook {1}'.format(cur_name, cur_play))
             logger.debug(' '.join(cmd_list))
 
@@ -257,6 +268,8 @@ def exec_play(cur_name, cur_play, cur_cfg, cur_tags, log_file, logger):
 def ParseCommandLineArguments():
     arg_parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter, description="Ansible playbook runner.")
     arg_parser.add_argument('-i', '--ini', type=str, help="Path to the ini file.", default="/etc/yaapr/yaapr.ini")
+    arg_parser.add_argument('-s', '--section', type=str, help="Only consider this section of the ini.", default="all")
+    arg_parser.add_argument('-t', '--tags', type=str, help="Only run these tags.", default=argparse.SUPPRESS)
 
     return arg_parser
 
@@ -295,7 +308,7 @@ def main():
     logger.addHandler(fileHandler)
 
     start_ts = time.time()
-    logger.info('main: {0} - Starting playbook runnner at {1}'.format(session_id, str(round(start_ts, 2))))
+    logger.info('main: {0} - Starting playbook runnner'.format(session_id))
 
     # convert each section to a dict and append to a list
     for section in config:
@@ -303,7 +316,11 @@ def main():
         # that any section with a priority is an ansible playbook
         if config[section].getint('priority') is not None:
             logger.info('main: Parsing section {0}'.format(section))
-            temp_list.append(parse_section(config[section]))
+
+            # process all sections, or only the one that was specified
+            if args.section == 'all' or args.section == section:
+                logger.info('main: Adding section {0} to temp_list'.format(section))
+                temp_list.append(parse_section(config[section]))
         else:
             if section != 'DEFAULT':
                 logger.warning('main: ini file section [{0}] doesn\'t contain a priority, skipping.'.format(section))
@@ -333,6 +350,9 @@ def main():
             if not check_tags(item['name'], item['skip_tags'], logger):
                 result = False
 
+            if not check_tags(args.section, args.tags, logger):
+                result = False
+
             if item['git_url'][0:3] == 'http':
                 if not check_url(item['name'], item['git_url'], logger):
                     result = False
@@ -341,10 +361,15 @@ def main():
             play_log_file = os.path.join(item['log_dir'], '{0}-{1}.log'.format(item['name'], session_id))
 
             if result and prep_cache(item['name'], item['git_url'], item['git_branch'], item['git_dir'], logger):
-                result = exec_play(item['name'], item['play_file'], item['cfg_file'], item['skip_tags'], play_log_file, logger)
+                if 'tags' in args:
+                    tags = args.tags
+                else:
+                    tags = ''
+
+                result = exec_play(item['name'], item['play_file'], item['cfg_file'], item['skip_tags'], play_log_file, tags, logger)
 
     stop_ts = time.time()
-    logger.info('main: {0} - Stopping playbook runnner at {1}'.format(session_id, str(round(stop_ts, 2))))
+    logger.info('main: {0} - Stopping playbook runnner'.format(session_id))
     logger.info('main: {0} - Elapsed time {1} second(s)'.format(session_id, str(round(stop_ts - start_ts, 2))))
 
 
