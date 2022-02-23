@@ -16,7 +16,7 @@ Group:         Application/Automation
 BuildArch:     noarch
 Url:           https://github.com/tazerdev/yaapr.git
 Requires:      python3 ansible git
-BuildRequires: rpmdevtools rpm-build redhat-rpm-config python3-devel
+BuildRequires: rpmdevtools rpm-build redhat-rpm-config
 Provides:      yaapr
 
 %define topdir  %(echo $PWD)
