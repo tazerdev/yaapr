@@ -1,0 +1,7 @@
+/var/log/yaapr/yaapr.log
+{
+    missingok
+    sharedscripts
+    compress
+    delaycompress
+}

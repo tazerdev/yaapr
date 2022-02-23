@@ -30,13 +30,17 @@ rpmdev-setuptree
 
 %install
 install -m 0755 --directory %{buildroot}/etc/yaapr
+install -m 0755 --directory %{buildroot}/etc/logrotate.d
+install -m 0755 --directory %{buildroot}/etc/cron.daily
 install -m 0755 --directory %{buildroot}/usr/bin
 install -m 0755 --directory %{buildroot}/var/log/yaapr
 install -m 0755 --directory %{buildroot}/var/lib/yaapr
 install -m 0755 --directory %{buildroot}/var/lib/yaapr/cache
 
-install -m 644 %{topdir}/yaapr.ini %{buildroot}/etc/yaapr
-install -m 755 %{topdir}/yaapr %{buildroot}/usr/bin
+install -m 644 %{topdir}/etc/yaapr/yaapr.ini %{buildroot}/etc/yaapr
+install -m 644 %{topdir}/etc/logrotate.d/yaapr %{buildroot}/etc/logrotate.d
+install -m 755 %{topdir}/usr/bin/yaapr %{buildroot}/usr/bin
+install -m 755 %{topdir}/etc/cron.daily/yaapr %{buildroot}/etc/cron.daily
 
 # needed to prevent compiled python files from being included
 exit 0
@@ -48,6 +52,8 @@ exit 0
 %dir %attr(755, root, root) /var/lib/yaapr/cache
 %config %attr(644, root, root) /etc/yaapr/yaapr.ini
 %attr(755, root, root) /usr/bin/yaapr
+%attr(755, root, root) /etc/cron.daily/yaapr
+%attr(644, root, root) /etc/logrotate.d/yaapr
 
 %pre
 if [ $1 == 1 ]
