@@ -3,6 +3,7 @@
 import os
 import sys
 import time
+import signal
 import random
 import string
 import logging
@@ -13,6 +14,12 @@ import urllib.request
 from datetime import datetime
 from operator import itemgetter
 from systemd.journal import JournalHandler
+
+def signal_handler(sig, frame):
+    print('Run terminating on due to CTRL-C')
+    logger.info('signal_handler: Terminating due to CTRL-C')
+    sys.exit(0)
+
 
 def parse_section(section):
     """
@@ -35,7 +42,6 @@ def parse_section(section):
             'log_file': os.path.join(section['logdir'], section['logfile']),
             'cfg_file': os.path.join(section['cachedir'], section.name, section['config']),
             'play_file': os.path.join(section['cachedir'], section.name, section['play']),
-            'skip_tags': section['skip_tags'],
             'pre_flight': True,
             'debug': []
             })
@@ -43,14 +49,13 @@ def parse_section(section):
     return cur
 
 
-def check_path(cur_name, cur_path, logger):
+def check_path(cur_name, cur_path):
     """
     Validate the provided path to ensure it can be written to, creating it if necessary.
 
     ### Parameters:
     - cur_name (string): name of the ini section being processed.
     - cur_path (string): the path that will be validated.
-    - logger (logging.logger): The logging facility used to output messages to.
 
     ### Returns:
     - cur (bool): returns false if the path can not be written to, otherwise returns true
@@ -77,14 +82,13 @@ def check_path(cur_name, cur_path, logger):
     return result
 
 
-def check_tags(cur_name, cur_tags, logger):
+def check_tags(cur_name, cur_tags):
     """
     Validate the supplied tags to ensure they don't contain spaces.
 
     ### Parameters:
     - cur_name (string): name of the ini section being processed.
     - cur_tags (string): the skip-tags that will be validated.
-    - logger (logging.logger): The logging facility used to output messages to.
 
     ### Returns:
     - cur (bool): returns false if spaces were detected, otherwise returns true
@@ -92,22 +96,21 @@ def check_tags(cur_name, cur_tags, logger):
     logger.info('check_tags: {0} - {1}'.format(cur_name, cur_tags))
     result = True
 
-    # check to see if we have any invalid characters in skip_tags, esp spaces
+    # check to see if we have any invalid characters in tags, esp spaces
     if cur_tags.find(' ') > -1:
-        logger.warning('check_tags: {0} - Invalid characters [spaces] detected in skip_tags'.format(cur_name))
+        logger.warning('check_tags: {0} - Invalid characters [spaces] detected in tags'.format(cur_name))
         result = False
 
     return result
 
 
-def check_url(cur_name, cur_url, logger):
+def check_url(cur_name, cur_url):
     """
     Check the provided URL to ensure it can be reached.
 
     ### Parameters:
     - cur_name (string): name of the ini section being processed.
     - cur_url (string): the URL that will be checked.
-    - logger (logging.logger): The logging facility used to output messages to.
 
     ### Returns:
     - cur (bool): returns false if checking the URL raises an exception, otherwise returns true.
@@ -126,7 +129,7 @@ def check_url(cur_name, cur_url, logger):
     return result
 
 
-def check_cmd(cur_cmd, logger):
+def check_cmd(cur_cmd):
     logger.info('check_cmd: {0}'.format(cur_cmd))
     result = True
 
@@ -143,9 +146,7 @@ def check_cmd(cur_cmd, logger):
     return result
 
 
-# once checks have been run we can safely clone a git repo and verify the
-# various files we need
-def prep_cache(cur_name, cur_url, cur_branch, cur_dir, logger):
+def prep_cache(cur_name, cur_url, cur_branch, cur_dir, offline):
     """
     Check the provided URL to ensure it can be reached.
 
@@ -154,24 +155,28 @@ def prep_cache(cur_name, cur_url, cur_branch, cur_dir, logger):
     - cur_url (string): the URL of the git repository that will be cloned.
     - cur_branch (string): the branch name that will be checked out.
     - cur_dir (string): the name of the directory the repo will be cloned in.
-    - logger (logging.logger): The logging facility used to output messages to.
+    - offline (bool): state representing wether or not to run network centric commands.
 
     ### Returns:
     - cur (bool): returns false if the repo can't be cloned or pulled, otherwise returns true.
     """
     logger.info('prep_cache: {0} - {1}'.format(cur_name, cur_url))
     result = True
+    pull_rc = 0
 
     # if git_dir exists, try to run git pull from within it
     if os.path.exists(cur_dir):
-        logger.info('prep_cache: {0} - Running git pull under {1}'.format(cur_name, cur_dir))
+        if not offline:
+            logger.info('prep_cache: {0} - Running git pull under {1}'.format(cur_name, cur_dir))
 
-        cmd_list = [ '/usr/bin/git', 'pull' ]
-        pull_result = subprocess.run(cmd_list, cwd=cur_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        logger.debug('prep_cache: {0} - {1}'.format(cur_name, ' '.join(cmd_list)))
+            cmd_list = [ '/usr/bin/git', 'pull' ]
+            pull_result = subprocess.run(cmd_list, cwd=cur_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            logger.debug('prep_cache: {0} - {1}'.format(cur_name, ' '.join(cmd_list)))
+
+            pull_rc = pull_result.returncode
 
         # if pull was successful, try to checkout the specififed branch
-        if pull_result.returncode == 0:
+        if pull_rc == 0:
             logger.info('prep_cache: {0} - Checking out {1} on {2}'.format(cur_name, cur_branch, cur_dir))
 
             cmd_list = [ '/usr/bin/git', 'checkout', cur_branch ]
@@ -191,20 +196,22 @@ def prep_cache(cur_name, cur_url, cur_branch, cur_dir, logger):
     else:
         logger.info('prep_cache: {0} - Git directory doesn\'t exist {1}'.format(cur_name, cur_dir))
 
-        cmd_list = [ '/usr/bin/git', 'clone', cur_url, '-b', cur_branch, cur_dir ]
-        logger.debug('prep_cache: {0} - {1}'.format(cur_name, ' '.join(cmd_list)))
-        clone_result = subprocess.run(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        logger.debug(clone_result.stderr.strip())
+        if not offline:
+            cmd_list = [ '/usr/bin/git', 'clone', cur_url, '-b', cur_branch, cur_dir ]
+            logger.debug('prep_cache: {0} - {1}'.format(cur_name, ' '.join(cmd_list)))
+            clone_result = subprocess.run(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            logger.debug(clone_result.stderr.strip())
 
-        if clone_result.returncode != 0:
-            logger.warning('prep_cache: {0} - Failed cloning repository {1}'.format(cur_name, cur_url))
-            result = False
+            if clone_result.returncode != 0:
+                logger.warning('prep_cache: {0} - Failed cloning repository {1}'.format(cur_name, cur_url))
+                result = False
+        else:
+            logger.warning('prep_cache: {0} - Unable to clone repository in offline mode'.format(cur_name, cur_url))
 
     return result
 
 
-# finally, run the ansible playbook
-def exec_play(cur_name, cur_play, cur_cfg, cur_skip_tags, log_file, cur_tags, logger):
+def exec_play(cur_name, cur_play, cur_cfg, cur_skip_tags, log_file, cur_tags, yaml_callback):
     """
     Execute an ansible-playbook based on the supplied parameters.
 
@@ -215,7 +222,7 @@ def exec_play(cur_name, cur_play, cur_cfg, cur_skip_tags, log_file, cur_tags, lo
     - cur_skip_tags (string): a comma separated string of tag names to be passed to the --skip-tags argument.
     - log_file (string): a path to a file where the playbook output will be redirected.
     - cur_tags (string): a comma separated string of tag names to be passed to the --tags argument.
-    - logger (logging.logger): The logging facility used to output messages to.
+    - yaml_callback (string): whether the stdout_callback should be overridden and set to yaml.
 
     ### Returns:
     - cur (bool): returns false if checking the URL raises an exception, otherwise returns true.
@@ -226,11 +233,20 @@ def exec_play(cur_name, cur_play, cur_cfg, cur_skip_tags, log_file, cur_tags, lo
     apull = '/usr/bin/ansible-pull'
     aplay = '/usr/bin/ansible-playbook'
 
+    start_ts = time.time()
+    
     if os.path.exists(cur_play):
         if os.path.exists(cur_cfg):
+            # prepare the subprocess environment with ansible specific variables
             new_env = os.environ.copy()
             new_env['ANSIBLE_CONFIG'] = '{0}'.format(cur_cfg)
 
+            if yaml_callback:
+                new_env['ANSIBLE_STDOUT_CALLBACK'] = 'yaml'
+                new_env['ANSIBLE_DISPLAY_OK_HOSTS'] = 'False'
+                new_env['ANSIBLE_DISPLAY_SKIPPED_HOSTS'] = 'False'
+
+            # build the command that will be run via subprocess
             cmd_list = [aplay, '-i', 'localhost,', '-c', 'local', '--limit', 'localhost', '--check', '--diff' ]
 
             if cur_tags != '':
@@ -251,9 +267,7 @@ def exec_play(cur_name, cur_play, cur_cfg, cur_skip_tags, log_file, cur_tags, lo
             if aplay_result.returncode == 0:
                 logger.info('exec_play: {0} - Playbook successfully run'.format(cur_name))
             else:
-                # logger.warning(aplay_result.stderr.strip())
                 logger.info('exec_play: {0} - Playbook terminated with errors'.format(cur_name))
-                # logger.debug(aplay_result.stdout.strip())
                 result = False
         else:
             logger.warning('exec_play: {0} - Config file missing {1}'.format(cur_name, cur_cfg))
@@ -261,6 +275,9 @@ def exec_play(cur_name, cur_play, cur_cfg, cur_skip_tags, log_file, cur_tags, lo
     else:
         logger.warning('exec_play: {0} - Play file missing {1}'.format(cur_name, cur_play))
         result = False
+
+    stop_ts = time.time()
+    logger.info('exec_play: Elapsed playbook run time {0} second(s)'.format(str(round(stop_ts - start_ts, 2))))
 
     return result
 
@@ -270,18 +287,24 @@ def ParseCommandLineArguments():
     arg_parser.add_argument('-i', '--ini', type=str, help="Path to the ini file.", default="/etc/yaapr/yaapr.ini")
     arg_parser.add_argument('-s', '--section', type=str, help="Only consider this section of the ini.", default="all")
     arg_parser.add_argument('-t', '--tags', type=str, help="Only run these tags.", default=argparse.SUPPRESS)
+    arg_parser.add_argument('-y', '--yaml', action="store_true", help="Use the yaml stdout_callback plugin.")
+    arg_parser.add_argument('-d', '--debug', action="store_true", help="Increase the application logging verbosity.")
+    arg_parser.add_argument('-o', '--offline', action="store_true", help="Run the playbooks in cache without attempting to run git pull.")
 
     return arg_parser
 
 
-# maybe add a command line argument so the user can supply a section/tag to process
 def main():
     result = True
     commands = [ '/usr/bin/ansible-playbook', '/usr/bin/ansible-pull', '/usr/bin/git' ]
     session_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
+    skip_tags = ''
+    tags = ''
 
     arg_parser = ParseCommandLineArguments()
     args = arg_parser.parse_args()
+
+    signal.signal(signal.SIGINT, signal_handler)
 
     # catch ini errors, especially duplicate section names
     try:
@@ -299,8 +322,15 @@ def main():
     # TODO: Validate logdir to ensure we can open and write to the logfile
     log_path = config['DEFAULT']['logdir']
 
+    global logger
+
     logger = logging.getLogger("runner")
-    logger.setLevel(logging.DEBUG)
+
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.INFO)
+
     filename = os.path.join(config['DEFAULT']['logdir'], 'yaapr.log')
     fileHandler = logging.FileHandler(filename, mode="a")
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%Y-%m-%d %H:%M:%S")
@@ -308,7 +338,7 @@ def main():
     logger.addHandler(fileHandler)
 
     start_ts = time.time()
-    logger.info('main: {0} - Starting playbook runnner'.format(session_id))
+    logger.info('main: {0} - Starting playbook runner'.format(session_id))
 
     # convert each section to a dict and append to a list
     for section in config:
@@ -324,52 +354,51 @@ def main():
         else:
             if section != 'DEFAULT':
                 logger.warning('main: ini file section [{0}] doesn\'t contain a priority, skipping.'.format(section))
+        
+        if config.has_option(section, 'skip_tags'):
+            skip_tags = config[section]['skip_tags']
 
     # verify the requisite binaries exist and that we have permission to
     # execute them
     for cmd in commands:
         if result:
-            result = check_cmd(cmd, logger)
-
-    # sort sections by priority
-    play_list = sorted(temp_list, key = lambda i: i['priority'])
+            result = check_cmd(cmd)
 
     # don't proceed if commands don't exist or aren't executable
     if result:
-        for item in play_list:
+        # iterate over sections ordered by priority
+        for item in sorted(temp_list, key = lambda i: i['priority']):
             result = True
 
             logger.info('main: Processing section ' + item['name'])
 
-            if not check_path(item['name'], item['cache_dir'], logger):
+            if not check_path(item['name'], item['cache_dir']):
                 result = False
 
-            if not check_path(item['name'], item['log_dir'], logger):
+            if not check_path(item['name'], item['log_dir']):
                 result = False
+            
+            if 'tags' in args:
+                if not check_tags(item['name'], args.tags):
+                    result = False
+                else:
+                    tags = args.tags
 
-            if not check_tags(item['name'], item['skip_tags'], logger):
-                result = False
-
-            if not check_tags(args.section, args.tags, logger):
+            if not check_tags(item['name'], skip_tags):
                 result = False
 
             if item['git_url'][0:3] == 'http':
-                if not check_url(item['name'], item['git_url'], logger):
+                if not check_url(item['name'], item['git_url']):
                     result = False
 
             # session log file for playbook output
             play_log_file = os.path.join(item['log_dir'], '{0}-{1}.log'.format(item['name'], session_id))
 
-            if result and prep_cache(item['name'], item['git_url'], item['git_branch'], item['git_dir'], logger):
-                if 'tags' in args:
-                    tags = args.tags
-                else:
-                    tags = ''
-
-                result = exec_play(item['name'], item['play_file'], item['cfg_file'], item['skip_tags'], play_log_file, tags, logger)
+            if result and prep_cache(item['name'], item['git_url'], item['git_branch'], item['git_dir'], args.offline):
+                result = exec_play(item['name'], item['play_file'], item['cfg_file'], skip_tags, play_log_file, tags, args.yaml)
 
     stop_ts = time.time()
-    logger.info('main: {0} - Stopping playbook runnner'.format(session_id))
+    logger.info('main: {0} - Stopping playbook runner'.format(session_id))
     logger.info('main: {0} - Elapsed time {1} second(s)'.format(session_id, str(round(stop_ts - start_ts, 2))))
 
 
